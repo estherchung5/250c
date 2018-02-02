@@ -1,0 +1,15 @@
+---
+title: "250C HW 1"
+author: "Esther Chung"
+date: "February 1, 2018"
+output: pdf_document
+---
+
+```{r}
+
+
+
+```
+
+
+
