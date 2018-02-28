@@ -3,13 +3,146 @@ title: "250C HW 1"
 author: "Esther Chung"
 date: "February 1, 2018"
 output: pdf_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r}
+setwd("/Users/estherchung/Documents/Graduate/Spring 2018/250C Advanced Epi Methods/Homework/Homework 1")
+load("frmgham_recoded.wide.Rdata")
 
-
-
+# Load required packages:
+library(geepack)
+library(doBy)
+library(stats4) # needed for MLE function library(blm)
+library(xtable)
 ```
+
+Calculate the proportion of the sample who experienced the event:
+```{r}
+prop <- table(frmgham_recoded.wide$hyperten) / sum(table(frmgham_recoded.wide$hyperten))
+prop
+```
+
+The proportion of the sample who experienced hypertension was 65.8%. 
+
+Estimate a logistic regression for the association of BMI on incident hypertension, adjusted for current smoking (binary), age (continuous), sex (binary), education (4-level):
+
+```{r}
+# Make 2nd category (BMI 18.5-24.9, ideal weight) the referent group:
+frmgham_recoded.wide$bmi_cat <- relevel(as.factor(frmgham_recoded.wide$bmi_cat),"2")
+
+# Estimate logistic regression:
+logistic.frmgham <- glm(hyperten ~ factor(bmi_cat) + cursmoke + age + factor(sex) + 
+                        factor(educ), data=frmgham_recoded.wide, family=binomial) 
+
+summary(logistic.frmgham)
+coef.logistic <- coef(logistic.frmgham)
+
+ci.logistic <- confint(logistic.frmgham) 
+logistic <- round(exp(cbind(coef.logistic, ci.logistic))[2:4,],2)
+```
+
+## Estimate a log-binomial model for the BMI-hypertension association. 
+```{r, echo=FALSE}
+# Estimate log-binomial regression:
+# log.binom.frmgham <- glm(hyperten ~ factor(bmi_cat) + cursmoke + age + factor(sex) + 
+                         #factor(educ), data=frmgham_recoded.wide, family=binomial("log")) 
+
+# Didn't converge...
+```
+
+## Estimate a modified Poisson model for the BMI-hypertension association. 
+```{r}
+# Estimate modified Poisson regression:
+poiss.frmgham <- geeglm(formula=hyperten ~ factor(bmi_cat) + cursmoke + age + 
+                        factor(sex) + factor(educ), data=frmgham_recoded.wide,
+                        id=randid,
+                        family=poisson(link="log"),
+                        corstr = "exchangeable") 
+summary(poiss.frmgham)
+coef.poiss <- coef(poiss.frmgham)
+
+# RR CIs with robust SEs:
+require(doBy)
+fram.RR.coefci.poiss <- esticon(poiss.frmgham, diag(length(coef(poiss.frmgham))))
+
+fram.RR.expci.poiss <- exp(cbind(fram.RR.coefci.poiss$Estimate, fram.RR.coefci.poiss$Lower, 
+                                 fram.RR.coefci.poiss$Upper))
+
+rownames(fram.RR.expci.poiss) <- names(coef(poiss.frmgham))
+colnames(fram.RR.expci.poiss) <- c("RR", "95% LL", "95% UL")
+
+# RR from Poisson model
+fram.RR.expci.poiss 
+poisson <- round(fram.RR.expci.poiss[2:4,],2) # only interested in BMI categories rows 
+```
+
+```{r}
+row1 <- c("0.72 (0.37, 1.38)", "--", "0.86 (0.63, 1.18)")
+row2 <- c("ref", "--", "ref")
+row3 <- c("1.57 (1.29, 1.91)", "--", "1.16 (1.09, 1.24)")
+row4 <- c("3.54 (2.33, 5.58)", "--", "1.38 (1.27, 1.49)")
+
+table1 <- as.data.frame(rbind(row1, row2, row3, row4))
+row.names(table1) <- c("<18.5", "18.5-24.9", "25.0-29.9", ">30.0")
+names(table1) <- c("Logistic OR (95% CI)", "Log-binomial RR (95% CI)", "Poisson RR (95% CI)")
+```
+
+```{r}
+print(xtable(table1, caption="Table 2", align = "l|ccc"))
+```
+
+# Model-Based Standardization with Logistic Model
+```{r}
+# Create copies of the original dataset:
+frmgham_recoded.wide.obese <- frmgham_recoded.wide.ideal <- frmgham_recoded.wide
+
+# Set BMI to obese (in p1) and ideal weight (in p0): 
+frmgham_recoded.wide.obese$bmi_cat <- 4 # Framingham population w/ all obese 
+frmgham_recoded.wide.ideal$bmi_cat <- 2 # Framingham population w/ all ideal weight
+
+# Obtain predicted individual risk of hypertension under each new dataset:
+rhat.obese <- predict(logistic.frmgham, type="response", newdata=frmgham_recoded.wide.obese)
+rhat.ideal <- predict(logistic.frmgham, type="response", newdata=frmgham_recoded.wide.ideal)
+
+# Calculate the average risk of hypertension in each hypothetical population:
+mu.rhat.obese <- mean(rhat.obese) 
+mu.rhat.ideal <- mean(rhat.ideal)
+
+# Estimate the risk ratio
+RR <- mu.rhat.obese/mu.rhat.ideal
+RR
+
+# Estiamte the risk difference
+RD <- mu.rhat.obese - mu.rhat.ideal
+RD
+```
+
+# Model-Based Standardization with Poisson Model
+```{r}
+# Obtain predicted individual risk of hypertension under each new dataset:
+rhat.obese.poiss <- predict(poiss.frmgham, type="response", newdata=frmgham_recoded.wide.obese)
+rhat.ideal.poiss <- predict(poiss.frmgham, type="response", newdata=frmgham_recoded.wide.ideal)
+
+# Calculate the average risk of hypertension in each hypothetical population:
+mu.rhat.obese.poiss <- mean(rhat.obese.poiss) 
+mu.rhat.ideal.poiss <- mean(rhat.ideal.poiss)
+
+# Estimate the risk ratio
+RR.poiss <- mu.rhat.obese.poiss/mu.rhat.ideal.poiss
+RR.poiss
+
+# Estimate the risk difference
+RD.poiss <- mu.rhat.obese.poiss - mu.rhat.ideal.poiss
+RD.poiss
+```
+
+
+
+
+
+
 
 
 
